@@ -1,4 +1,6 @@
-﻿using FluentValidation;
+﻿using ErrorOr;
+using FluentValidation;
+using MediatR;
 
 namespace B2B.Application.Common.Behaviors;
 
@@ -23,7 +25,7 @@ public class ValidationBehavior<TRequest, TResponse>(IValidator<TRequest>? valid
 
         if (validationResult.IsValid)
         {
-            return await next();
+            return await next(cancellationToken);
         }
 
         var errors = validationResult.Errors

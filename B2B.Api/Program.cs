@@ -1,3 +1,7 @@
+using B2B.Api;
+using B2B.Application;
+using B2B.Infrastructure;
+
 var builder = WebApplication.CreateBuilder(args);
 {
     builder.Services
@@ -9,12 +13,12 @@ var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 {
     app.UseExceptionHandler();
-    app.UseInfrastructure();
+    //app.UseInfrastructure();
 
     if (app.Environment.IsDevelopment())
     {
-        app.UseSwagger();
-        app.UseSwaggerUI();
+        //app.UseSwagger();
+        //app.UseSwaggerUI();
     }
 
     app.UseHttpsRedirection();
