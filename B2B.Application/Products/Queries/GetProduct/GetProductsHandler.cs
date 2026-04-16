@@ -8,9 +8,9 @@ namespace B2B.Application.Products.Queries.GetProduct;
 public class GetProductsHandler(
     IProductRepository _productRepository,
     ICacheService _cacheService)
-    : IRequestHandler<GetProducutsQuery, ErrorOr<List<Product>>>
+    : IRequestHandler<GetProducutsQuery, List<Product>>
 {
-    public async Task<ErrorOr<List<Product>>> Handle(
+    public async Task<List<Product>> Handle(
         GetProducutsQuery request,
         CancellationToken cancellationToken)
     {

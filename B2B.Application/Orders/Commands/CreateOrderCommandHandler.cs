@@ -2,72 +2,70 @@
 using ErrorOr;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Polly;
+using Polly.Retry;
 using System;
 
 namespace B2B.Application.Orders.Commands;
 
 public class CreateOrderCommandHandler(
-    IUnitOfWork _uow,
-    IMessageQueue _queue,
+    IUnitOfWork _uow,    
     IOrderService _orderService,
     ICacheService _cacheService,
+    IOutboxService _outboxService,
     IOrderRepository _orderRepository,
     IProductRepository _productRepository,
     IIdempotencyService _idempotencyService)
-     : IRequestHandler<CreateOrderCommand, ErrorOr<Guid>>
+     : IRequestHandler<CreateOrderCommand, Guid>
 {
-    public async Task<ErrorOr<Guid>> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
+    private readonly AsyncRetryPolicy _retryPolicy = Policy
+        .Handle<DbUpdateConcurrencyException>()
+        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromMilliseconds(100));
+
+    public async Task<Guid> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
         {
-            var existing = await _idempotencyService.GetAsync(request.IdempotencyKey, request.CustomerRef);
-
-            if (existing.HasValue)
-            {
-                return existing.Value;
-            }
-
-            Guid result = Guid.Empty;
-
-            for (int i = 0; i < 3; i++)
-            {
-                try
-                {
-                    await _uow.BeginTransactionAsync();
-
-                    var ids = request.OrderItems.Select(x => x.ProductId).ToList();
-                    var products = await _productRepository.GetByIdsAsync(ids);
-
-                    var mapped = request
-                        .OrderItems
-                        .Select(i => (products.FirstOrDefault(p => p.Id == i.ProductId), i.Quantity))
-                        .ToList();
-
-                    var order = _orderService.Create(request.CustomerRef, mapped);
-
-                    await _orderRepository.AddAsync(order);
-
-                    await _uow.SaveChangesAsync();
-                    await _uow.CommitTransactionAsync();
-
-                    result = order.Id;
-                    break;
-                }
-                catch (DbUpdateConcurrencyException)
-                {
-                    await _uow.RollbackAsync();
-                    await Task.Delay(100);
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
-                await _idempotencyService.StoreAsync(request.IdempotencyKey, request.CustomerRef, result);
-
-            await _cacheService.RemoveAsync("products");
-
-            await _queue.PublishAsync(new { OrderId = result });
-
-            return result;
+            return Guid.Empty;
         }
+        var existing = await _idempotencyService.GetAsync(request.IdempotencyKey, request.CustomerRef);
+
+        if (existing.HasValue)
+        {
+            return existing.Value;
+        }
+
+        Guid result = Guid.Empty;
+
+        await _retryPolicy.ExecuteAsync(async () =>
+        {
+            await _uow.BeginTransactionAsync();
+
+            var ids = request.OrderItems.Select(x => x.ProductId).ToList();
+            var products = await _productRepository.GetByIdsAsync(ids);
+
+            var mapped = request
+                .OrderItems
+                .Select(i => (products.First(p => p.Id == i.ProductId), i.Quantity))
+                .ToList();
+
+            var order = _orderService.Create(request.CustomerRef, mapped);
+
+            await _orderRepository.AddAsync(order);
+
+            await _uow.SaveChangesAsync(cancellationToken);
+            await _uow.CommitTransactionAsync(cancellationToken);
+
+            result = order.Id;
+        });
+
+        if (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
+            await _idempotencyService.StoreAsync(request.IdempotencyKey, request.CustomerRef, result);
+
+        await _cacheService.RemoveAsync("products");
+
+        await _outboxService.AddAsync("OrderCreated", System.Text.Json.JsonSerializer.Serialize(new { OrderId = result }));
+
+        return result;
     }
 }

@@ -4,4 +4,4 @@ using MediatR;
 
 namespace B2B.Application.Products.Queries.GetProduct;
 
-public record GetProducutsQuery() : IRequest<ErrorOr<List<Product>>>;
+public record GetProducutsQuery() : IRequest<List<Product>>;
